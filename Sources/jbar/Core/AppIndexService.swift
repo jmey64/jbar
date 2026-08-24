@@ -88,20 +88,8 @@ public final class AppIndexService: ObservableObject {
         if let running = running {
             running.activate()
 
-            if name.lowercased() == "finder" || (bundleID == "com.apple.finder") {
-                let finderScript = """
-                tell application "Finder"
-                    reopen
-                    activate
-                    if (count of windows) = 0 then
-                        make new Finder window
-                    end if
-                end tell
-                """
-                if let script = NSAppleScript(source: finderScript) {
-                    var error: NSDictionary?
-                    script.executeAndReturnError(&error)
-                }
+            if name.lowercased() == "finder" || (bundleID == "com.apple.finder") || url.path.contains("Finder.app") {
+                QuickLaunchService.openFinder(newWindow: false)
                 return
             }
 

@@ -22,6 +22,7 @@ Additional targets:
 ```bash
 make install    # Builds and installs jbar.app to /Applications
 make uninstall  # Removes jbar.app from /Applications
+make test       # Runs the automated unit test suite
 make app        # Builds signed release application bundle (build/jbar.app)
 make universal  # Builds universal binary (Apple Silicon + Intel)
 make build      # Compiles debug binary via Swift PM

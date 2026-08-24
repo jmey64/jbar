@@ -78,9 +78,16 @@ public final class QuickLaunchService: ObservableObject {
         let url = pinned.url
         let name = pinned.name
         let bundleID = Bundle(url: url)?.bundleIdentifier
+        let isFinder = name.lowercased() == "finder" || bundleID == "com.apple.finder" || pinned.path.contains("Finder.app")
+
+        if isFinder {
+            Self.openFinder(newWindow: newWindow)
+            return
+        }
 
         if let running = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleURL?.path == pinned.path ||
+            $0.bundleURL?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == pinned.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ||
             $0.localizedName?.lowercased() == name.lowercased() ||
             (bundleID != nil && $0.bundleIdentifier == bundleID)
         }) {
@@ -97,21 +104,51 @@ public final class QuickLaunchService: ObservableObject {
         }
     }
 
-    public static func openNewWindow(for app: NSRunningApplication, url: URL, name: String) {
-        let pid = app.processIdentifier
-        let bundleID = app.bundleIdentifier ?? Bundle(url: url)?.bundleIdentifier ?? ""
+    public static func openFinder(newWindow: Bool = true) {
+        let homeURL = FileManager.default.homeDirectoryForCurrentUser
+        let finderApp = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.finder" || $0.localizedName == "Finder"
+        })
 
-        app.activate()
+        if newWindow {
+            // 1. Native Cocoa API to reliably open a Finder window at the user's home folder
+            NSWorkspace.shared.open(homeURL)
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: homeURL.path)
 
-        // 1. Scriptable app specialization
-        if bundleID == "com.apple.finder" || name.lowercased() == "finder" {
+            // 2. AppleScript as enhancement
             let script = "tell application \"Finder\" to make new Finder window\ntell application \"Finder\" to activate"
             if let appleScript = NSAppleScript(source: script) {
                 var error: NSDictionary?
                 appleScript.executeAndReturnError(&error)
             }
+        } else {
+            if let finder = finderApp {
+                let windows = AccessibilityService.fetchWindows(for: finder.processIdentifier)
+                if let minWin = windows.first(where: { $0.isMinimized }) {
+                    AccessibilityService.raise(window: minWin.axElement, of: finder.processIdentifier)
+                } else if let firstWin = windows.first {
+                    AccessibilityService.raise(window: firstWin.axElement, of: finder.processIdentifier)
+                } else {
+                    NSWorkspace.shared.open(homeURL)
+                }
+            } else {
+                NSWorkspace.shared.open(homeURL)
+            }
+        }
+
+        finderApp?.activate()
+    }
+
+    public static func openNewWindow(for app: NSRunningApplication, url: URL, name: String) {
+        let pid = app.processIdentifier
+        let bundleID = app.bundleIdentifier ?? Bundle(url: url)?.bundleIdentifier ?? ""
+
+        if bundleID == "com.apple.finder" || name.lowercased() == "finder" || url.path.contains("Finder.app") {
+            openFinder(newWindow: true)
             return
         }
+
+        app.activate()
 
         if bundleID == "com.apple.Terminal" || name.lowercased() == "terminal" {
             let script = "tell application \"Terminal\" to do script \"\"\ntell application \"Terminal\" to activate"

@@ -10,12 +10,20 @@ let package = Package(
         .executable(
             name: "jbar",
             targets: ["jbar"]
+        ),
+        .executable(
+            name: "jbarTestRunner",
+            targets: ["jbarTestRunner"]
+        ),
+        .library(
+            name: "jbarLib",
+            targets: ["jbarLib"]
         )
     ],
     dependencies: [],
     targets: [
-        .executableTarget(
-            name: "jbar",
+        .target(
+            name: "jbarLib",
             dependencies: [],
             path: "Sources/jbar",
             linkerSettings: [
@@ -25,6 +33,16 @@ let package = Package(
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreAudio")
             ]
+        ),
+        .executableTarget(
+            name: "jbar",
+            dependencies: ["jbarLib"],
+            path: "Sources/jbarApp"
+        ),
+        .executableTarget(
+            name: "jbarTestRunner",
+            dependencies: ["jbarLib"],
+            path: "Tests/jbarTests"
         )
     ]
 )

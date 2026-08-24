@@ -18,11 +18,14 @@ public struct RunningAppsBarView: View {
             let maxItemWidth: CGFloat = 160
             let minItemWidth: CGFloat = 36
 
-            // Calculate item width based on available space and count
-            let totalSpacing = count > 1 ? CGFloat(count - 1) * spacing : 0
-            let availableForItems = max(0, availableWidth - totalSpacing)
-            let calculatedWidth = count > 0 ? availableForItems / CGFloat(count) : maxItemWidth
-            let itemWidth = max(minItemWidth, min(maxItemWidth, calculatedWidth))
+            // Calculate item width based on available space and count using TaskbarLayoutCalculator
+            let itemWidth = TaskbarLayoutCalculator.calculateItemWidth(
+                availableWidth: availableWidth,
+                itemCount: count,
+                spacing: spacing,
+                maxItemWidth: maxItemWidth,
+                minItemWidth: minItemWidth
+            )
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: spacing) {
