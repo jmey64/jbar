@@ -12,10 +12,10 @@ fi
 echo "🔨 Building jbar..."
 if [ "$BUILD_UNIVERSAL" = true ]; then
     echo "🌐 Building Universal Binary (arm64 + x86_64)..."
-    swift build -c release --arch arm64 --arch x86_64
+    swift build -c release --product jbar --arch arm64 --arch x86_64
     BIN_PATH=".build/apple/Products/Release/jbar"
 else
-    swift build -c release
+    swift build -c release --product jbar
     BIN_PATH=".build/release/jbar"
 fi
 

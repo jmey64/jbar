@@ -1,4 +1,4 @@
-.PHONY: all build release app universal run install uninstall clean help
+.PHONY: all build test release app universal run install uninstall clean help
 
 INSTALL_DIR ?= /Applications
 
@@ -9,6 +9,11 @@ all: build
 build:
 	@echo "🔨 Building jbar (debug)..."
 	swift build
+
+## test: Runs the automated unit test suite
+test:
+	@echo "🧪 Running unit tests..."
+	swift run jbarTestRunner
 
 ## app / release: Compiles release binary and packages into build/jbar.app
 release app:
@@ -50,6 +55,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  build       Compile debug executable (default)"
+	@echo "  test        Run unit tests (swift test)"
 	@echo "  app         Build signed release application bundle (build/jbar.app)"
 	@echo "  universal   Build universal release bundle (Apple Silicon + Intel)"
 	@echo "  run         Build and launch jbar.app"

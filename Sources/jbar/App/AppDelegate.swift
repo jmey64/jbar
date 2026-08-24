@@ -2,6 +2,9 @@ import AppKit
 import SwiftUI
 
 public final class AppDelegate: NSObject, NSApplicationDelegate {
+    public override init() {
+        super.init()
+    }
     public func applicationDidFinishLaunching(_ notification: Notification) {
         // Run as an accessory / agent application (no dock icon)
         NSApp.setActivationPolicy(.accessory)
