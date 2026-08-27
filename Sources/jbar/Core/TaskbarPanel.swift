@@ -10,7 +10,7 @@ public final class TaskbarPanel: NSPanel {
         )
 
         self.level = .floating
-        self.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        self.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         self.isOpaque = false
         self.backgroundColor = .clear
         self.hasShadow = false

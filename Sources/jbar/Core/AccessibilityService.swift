@@ -3,6 +3,9 @@ import AppKit
 import ApplicationServices
 import Combine
 
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(_ element: AXUIElement, _ wid: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 @MainActor
 public final class AccessibilityService: ObservableObject {
     public static let shared = AccessibilityService()
@@ -53,6 +56,77 @@ public final class AccessibilityService: ObservableObject {
         return screenIdentifier(for: targetScreen)
     }
 
+    public nonisolated static func isStandardWindow(
+        role: String?,
+        subrole: String?,
+        size: CGSize,
+        isMinimized: Bool = false,
+        hasTitle: Bool = true,
+        hasWindowButtons: Bool = true,
+        isMain: Bool = false
+    ) -> Bool {
+        // 1. Role must be AXWindow
+        guard let role = role, role == (kAXWindowRole as String) else {
+            return false
+        }
+
+        // 2. Subrole filtering: Disallow known auxiliary / tooltip / popover / floating subroles
+        if let subrole = subrole {
+            let disallowedSubroles: Set<String> = [
+                "AXHelpTag",
+                "AXPopover",
+                "AXFloatingWindow",
+                "AXSystemFloatingMenu",
+                "AXMenu",
+                "AXDrawer",
+                "AXUnknown"
+            ]
+            if disallowedSubroles.contains(subrole) {
+                return false
+            }
+
+            let allowedStandardSubroles: Set<String> = [
+                kAXStandardWindowSubrole as String,
+                kAXDialogSubrole as String,
+                kAXSystemDialogSubrole as String
+            ]
+
+            if !allowedStandardSubroles.contains(subrole) {
+                // If it is a custom/unspecified subrole, ensure it has standard window characteristics
+                if !isMinimized && (size.width < 100 || size.height < 80) {
+                    return false
+                }
+                if !hasTitle && !hasWindowButtons && !isMain {
+                    return false
+                }
+            }
+        } else {
+            // No subrole specified: check dimensions and traits
+            if !isMinimized && (size.width < 100 || size.height < 80) {
+                return false
+            }
+            if !hasTitle && !hasWindowButtons && !isMain {
+                return false
+            }
+        }
+
+        // 3. Size check for non-minimized windows: tooltips and hidden helpers are tiny
+        if !isMinimized && (size.width < 100 || size.height < 50) {
+            return false
+        }
+
+        return true
+    }
+
+    public nonisolated static func isWindowFullScreen(windowElement: AXUIElement) -> Bool {
+        var fullScreenRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(windowElement, "AXFullScreen" as CFString, &fullScreenRef) == .success,
+           let isFS = fullScreenRef as? Bool {
+            return isFS
+        }
+        return false
+    }
+
     public nonisolated static func fetchWindows(for pid: pid_t) -> [WindowInfo] {
         guard AXIsProcessTrusted() else { return [] }
 
@@ -81,7 +155,21 @@ public final class AccessibilityService: ObservableObject {
         }
 
         var windowInfos: [WindowInfo] = []
-        for (index, windowElement) in windowsList.enumerated() {
+        for windowElement in windowsList {
+            var roleRef: CFTypeRef?
+            var role = ""
+            if AXUIElementCopyAttributeValue(windowElement, kAXRoleAttribute as CFString, &roleRef) == .success,
+               let r = roleRef as? String {
+                role = r
+            }
+
+            var subroleRef: CFTypeRef?
+            var subrole: String?
+            if AXUIElementCopyAttributeValue(windowElement, kAXSubroleAttribute as CFString, &subroleRef) == .success,
+               let sr = subroleRef as? String {
+                subrole = sr
+            }
+
             var titleRef: CFTypeRef?
             var title = ""
             if AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef) == .success,
@@ -116,9 +204,35 @@ public final class AccessibilityService: ObservableObject {
                 AXValueGetValue(val as! AXValue, .cgSize, &size)
             }
 
+            var closeBtnRef: CFTypeRef?
+            var minBtnRef: CFTypeRef?
+            let hasCloseBtn = (AXUIElementCopyAttributeValue(windowElement, kAXCloseButtonAttribute as CFString, &closeBtnRef) == .success && closeBtnRef != nil)
+            let hasMinBtn = (AXUIElementCopyAttributeValue(windowElement, kAXMinimizeButtonAttribute as CFString, &minBtnRef) == .success && minBtnRef != nil)
+            let hasButtons = hasCloseBtn || hasMinBtn
+
+            // Validate standard window traits (exclude tooltips, popovers, menus, etc.)
+            guard isStandardWindow(
+                role: role,
+                subrole: subrole,
+                size: size,
+                isMinimized: isMinimized,
+                hasTitle: !title.isEmpty,
+                hasWindowButtons: hasButtons,
+                isMain: isMain
+            ) else {
+                continue
+            }
+
             let screenID = determineScreenID(for: point, size: size)
 
-            let id = "\(pid)-\(index)-\(title.hashValue)"
+            var wid: CGWindowID = 0
+            let id: String
+            if _AXUIElementGetWindow(windowElement, &wid) == .success && wid > 0 {
+                id = "\(pid)-win-\(wid)"
+            } else {
+                id = "\(pid)-ax-\(CFHash(windowElement))"
+            }
+
             windowInfos.append(WindowInfo(
                 id: id,
                 axElement: windowElement,
@@ -130,6 +244,58 @@ public final class AccessibilityService: ObservableObject {
         }
 
         return windowInfos
+    }
+
+    public nonisolated static func constrainWindowToUsableScreenArea(
+        windowElement: AXUIElement,
+        screen: NSScreen,
+        barHeight: CGFloat = 26
+    ) {
+        guard let primaryScreen = NSScreen.screens.first else { return }
+        let primaryHeight = primaryScreen.frame.height
+
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        var point = CGPoint.zero
+        var size = CGSize.zero
+
+        guard AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &posRef) == .success,
+              let pVal = posRef,
+              AXValueGetValue(pVal as! AXValue, .cgPoint, &point),
+              AXUIElementCopyAttributeValue(windowElement, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let sVal = sizeRef,
+              AXValueGetValue(sVal as! AXValue, .cgSize, &size) else {
+            return
+        }
+
+        // Quartz screen coordinates
+        let screenQuartzY = primaryHeight - (screen.frame.origin.y + screen.frame.height)
+        let screenQuartzBottom = screenQuartzY + screen.frame.height
+        let usableBottom = screenQuartzBottom - barHeight
+
+        let windowBottom = point.y + size.height
+
+        // Check if window bottom extends into jbar's bottom area
+        if windowBottom > usableBottom {
+            if point.y < usableBottom {
+                let newHeight = usableBottom - point.y
+                if newHeight >= 80 && abs(newHeight - size.height) > 1.0 {
+                    var newSize = CGSize(width: size.width, height: newHeight)
+                    if let newSizeVal = AXValueCreate(.cgSize, &newSize) {
+                        AXUIElementSetAttributeValue(windowElement, kAXSizeAttribute as CFString, newSizeVal)
+                    }
+                }
+            } else {
+                // Window origin is entirely inside or below jbar: move it up
+                let targetY = usableBottom - min(size.height, 200)
+                if targetY >= screenQuartzY {
+                    var newPoint = CGPoint(x: point.x, y: targetY)
+                    if let newPointVal = AXValueCreate(.cgPoint, &newPoint) {
+                        AXUIElementSetAttributeValue(windowElement, kAXPositionAttribute as CFString, newPointVal)
+                    }
+                }
+            }
+        }
     }
 
     public nonisolated static func raise(window: AXUIElement?, of pid: pid_t) {

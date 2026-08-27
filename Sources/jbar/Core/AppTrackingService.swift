@@ -87,15 +87,37 @@ public final class AppTrackingService: ObservableObject {
             let onScreenList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 
             var onScreenPIDs = Set<pid_t>()
+            var fullscreenScreenIDs = Set<String>()
+            let screens = NSScreen.screens
+            let primaryHeight = screens.first?.frame.height ?? 1440
+
             for win in onScreenList {
                 let pid = win[kCGWindowOwnerPID as String] as? pid_t ?? 0
                 let layer = win[kCGWindowLayer as String] as? Int ?? 0
                 let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
                 let width = bounds["Width"] as? Double ?? 0
                 let height = bounds["Height"] as? Double ?? 0
+                let x = bounds["X"] as? Double ?? 0
+                let y = bounds["Y"] as? Double ?? 0
                 
-                if layer <= 5 && width > 50 && height > 50 {
+                // Normal document/app windows are at layer 0. Filter out layer > 0 (tooltips, menus, overlays)
+                if layer == 0 && width >= 100 && height >= 80 {
                     onScreenPIDs.insert(pid)
+                }
+
+                // Check fullscreen bounds for active/regular apps (covers a display)
+                if pids.contains(pid) && layer == 0 {
+                    for screen in screens {
+                        let sf = screen.frame
+                        let screenQuartzY = primaryHeight - (sf.origin.y + sf.height)
+                        let screenQuartzX = sf.origin.x
+
+                        if abs(x - screenQuartzX) <= 2 && abs(y - screenQuartzY) <= 2 &&
+                           width >= sf.width - 2 && height >= sf.height - 2 {
+                            let sID = AccessibilityService.screenIdentifier(for: screen)
+                            fullscreenScreenIDs.insert(sID)
+                        }
+                    }
                 }
             }
 
@@ -108,9 +130,50 @@ public final class AppTrackingService: ObservableObject {
                 }
             }
 
+            // Check if frontmost window or any window is reported as FullScreen via Accessibility
+            if let frontPID = frontPID {
+                let frontWindows = windowMap[frontPID] ?? []
+                for win in frontWindows {
+                    if let element = win.axElement, AccessibilityService.isWindowFullScreen(windowElement: element) {
+                        if let sID = win.screenID {
+                            fullscreenScreenIDs.insert(sID)
+                        } else if let mainScreen = screens.first {
+                            fullscreenScreenIDs.insert(AccessibilityService.screenIdentifier(for: mainScreen))
+                        }
+                    }
+                }
+            }
+
+            // Constrain standard non-fullscreen windows so they do not draw behind jbar
+            let barHeight = TaskbarPanelController.defaultBarHeight
+            for (pid, windows) in windowMap {
+                guard onScreenPIDs.contains(pid) || pid == frontPID else { continue }
+                for win in windows where !win.isMinimized {
+                    guard let element = win.axElement else { continue }
+                    if AccessibilityService.isWindowFullScreen(windowElement: element) {
+                        continue
+                    }
+                    let targetScreen = screens.first { AccessibilityService.screenIdentifier(for: $0) == win.screenID } ?? screens.first
+                    if let screen = targetScreen {
+                        AccessibilityService.constrainWindowToUsableScreenArea(
+                            windowElement: element,
+                            screen: screen,
+                            barHeight: barHeight
+                        )
+                    }
+                }
+            }
+
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 
+                // Update fullscreen visibility for all screens
+                for screen in screens {
+                    let sID = AccessibilityService.screenIdentifier(for: screen)
+                    let isFS = fullscreenScreenIDs.contains(sID)
+                    TaskbarPanelController.shared.setScreenFullscreen(screenID: sID, isFullscreen: isFS)
+                }
+
                 var orderedPIDs = self.customOrder
                 for pid in pids where !orderedPIDs.contains(pid) {
                     orderedPIDs.append(pid)
@@ -180,7 +243,9 @@ public final class AppTrackingService: ObservableObject {
 
         for app in displayApps {
             if app.windows.isEmpty {
-                generatedItems.append(TaskbarItem(app: app, window: nil))
+                if app.isActive {
+                    generatedItems.append(TaskbarItem(app: app, window: nil))
+                }
             } else {
                 for win in app.windows {
                     generatedItems.append(TaskbarItem(app: app, window: win))
